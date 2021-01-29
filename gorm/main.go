@@ -24,6 +24,8 @@ type DB struct {
 	logger            logger
 	search            *search
 	values            sync.Map
+	// Dialector database dialector
+	Dialector
 
 	// global db
 	parent        *DB
@@ -506,6 +508,67 @@ func (s *DB) Table(name string) *DB {
 // Debug start debug mode
 func (s *DB) Debug() *DB {
 	return s.clone().LogMode(true)
+}
+
+func (s *DB) SavePoint(name string) *DB {
+	if savePointer, ok := s.Dialector.(SavePointerDialectorInterface); ok {
+		s.AddError(savePointer.SavePoint(s, name))
+	} else {
+		s.AddError(errors.New("unsupported driver"))
+	}
+	return s
+}
+
+func (s *DB) RollbsackTo(name string) *DB {
+	if savePointer, ok := s.Dialector.(SavePointerDialectorInterface); ok {
+		s.AddError(savePointer.RollbackTo(s, name))
+	} else {
+		s.AddError(errors.New("unsupported driver"))
+	}
+	return s
+}
+
+// Transaction start a transaction as a block, return error will rollback, otherwise to commit.
+func (s *DB) Transaction(fc func(tx *DB) error) (err error) {
+	c := s.clone()
+	panicked := true
+	if committer, ok := c.db.(sqlTx); ok && committer != nil {
+		// nested transaction
+		err = c.SavePoint(fmt.Sprintf("sp%p", fc)).Error
+		fmt.Printf("err:%v,committer:%v,ok:%v", err, committer, ok)
+		fmt.Println("===here000===")
+		defer func() {
+			// Make sure to rollback when panic, Block error or Commit error
+			if panicked || err != nil {
+				fmt.Println("===here001===")
+				c.RollbsackTo(fmt.Sprintf("sp%p", fc))
+			}
+		}()
+	} else {
+		fmt.Println("===here01===")
+		tx := c.Begin()
+
+		defer func() {
+			// Make sure to rollback when panic, Block error or Commit error
+			if panicked || err != nil {
+				tx.Rollback()
+			}
+		}()
+
+		if err = tx.Error; err == nil {
+			fmt.Println("===here02===")
+			err = fc(tx)
+			fmt.Printf("err:%v", err)
+		}
+
+		if err == nil {
+			fmt.Println("===here03===")
+			err = tx.Commit().Error
+		}
+	}
+
+	panicked = false
+	return
 }
 
 // Begin begin a transaction

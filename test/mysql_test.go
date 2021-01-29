@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"errors"
 	"testing"
 	"time"
 
@@ -141,5 +142,49 @@ func Test_GORM(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Commit()
+	TearDown()
+}
+
+func Test_Transaction(t *testing.T) {
+	SetUp()
+
+	//获取链接池
+	db, err := lib.GetGormPool("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// rollback
+	db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(createTableSQL).Error; err != nil {
+			t.Fatal(err)
+		}
+		t1 := Test1{Name: "test_name", CreatedAt: time.Now()}
+		if err := tx.Save(&t1).Error; err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("the error message")
+	})
+
+	// commit
+	db.Transaction(func(tx *gorm.DB) error {
+		t1 := &Test1{Name: "test_name", CreatedAt: time.Now()}
+		if err := tx.Save(t1).Error; err != nil { 
+			t.Fatal(err)
+		}
+		return nil
+	})
+
+	//查询数据
+	list := []Test1{}
+	if err := db.Where("name=?", "test_name").Find(&list).Error; err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(list)
+
+	//删除表数据
+	if err := db.Exec(dropTableSQL).Error; err != nil {
+		t.Fatal(err)
+	}
+
 	TearDown()
 }
